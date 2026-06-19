@@ -40,10 +40,11 @@ export class AuthService {
   private async handleAuthStateChange(user: FirebaseUser | null) {
     const revision = ++this.authStateRevision;
     this.currentUser.set(user);
+    this.userProfile.set(null);
+    this.isAuthReady.set(false);
 
     if (!user) {
       if (revision === this.authStateRevision) {
-        this.userProfile.set(null);
         this.isAuthReady.set(true);
       }
       return;
