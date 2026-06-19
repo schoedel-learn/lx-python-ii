@@ -4,6 +4,7 @@ import { UserProfile } from './auth.service';
 import { MemoryService } from './memory.service';
 import { collection, doc, setDoc, getDocs, query, orderBy } from 'firebase/firestore';
 import { db, auth } from '../../firebase';
+import { buildLearningMessages, buildSystemInstruction } from './learning-agent-request';
 
 // Using the global variable defined in globals.d.ts or .env
 declare const OPENAI_API_KEY: string;
@@ -87,22 +88,7 @@ export class LearningAgentService {
       ? memories.map(m => `- [${m.category}] ${m.content}`).join('\n')
       : 'No memories recorded yet.';
 
-    const systemInstruction = `
-      You are an expert Python facilitator. You are teaching ${userProfile?.firstName || 'the user'}, 
-      whose skill level is ${userProfile?.pythonExperience || 'Beginner'} and is interested in ${userProfile?.projectInterests?.join(', ') || 'General Python'}. 
-      
-      Here is their learning history and preferences:
-      ${memoryString}
-
-      Use this to perfectly calibrate your next response to their Zone of Proximal Development.
-      
-      Pedagogical Rules:
-      1. Docs-First: When explaining a concept, quote or reference official Python/library documentation.
-      2. Holistic Contextualization: Explain strengths, weaknesses, and how it compares to other tools/languages.
-      3. ZPD: Keep challenges strictly calibrated to their skill level.
-      4. Do NOT mention ADHD or neurodivergence. Focus purely on clear, evidence-based instructional design.
-      5. Keep responses concise and highly structured. Use markdown formatting.
-    `;
+    const systemInstruction = buildSystemInstruction(userProfile, memoryString);
 
     const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       {
@@ -132,17 +118,7 @@ export class LearningAgentService {
     // 3. Fetch previous chat history to build the session
     const history = await this.getChatHistory();
     
-    // Map our DB roles to OpenAI roles
-    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      { role: 'system', content: systemInstruction },
-      ...history.map(msg => ({
-        role: (msg.role === 'model' ? 'assistant' : msg.role) as 'user' | 'assistant' | 'system',
-        content: msg.content
-      }))
-    ];
-
-    // Add the current message
-    messages.push({ role: 'user', content: message });
+    const messages = buildLearningMessages(systemInstruction, history, message);
 
     const modelName = typeof DEFAULT_AI_MODEL !== 'undefined' ? DEFAULT_AI_MODEL : 'gpt-5.4-mini';
 
