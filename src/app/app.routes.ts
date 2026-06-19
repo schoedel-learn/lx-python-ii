@@ -11,25 +11,16 @@ import { ForumPostComponent } from './components/forum-post/forum-post.component
 import { inject } from '@angular/core';
 import { AuthService } from './services/auth.service';
 import { Router } from '@angular/router';
+import { getAuthRedirect } from './auth/auth-policy';
 
 const authGuard = () => {
   const authService = inject(AuthService);
   const router = inject(Router);
   const user = authService.currentUser();
   const profile = authService.userProfile();
-  
-  if (!user) {
-    return router.parseUrl('/login');
-  }
-  
-  // Admin bypasses email verification
-  const isVerified = user.email === 'schoedelb@gmail.com' || user.emailVerified;
-  
-  if (!isVerified || !profile?.registrationComplete) {
-    return router.parseUrl('/onboarding');
-  }
-  
-  return true;
+  const redirect = getAuthRedirect(user, profile);
+
+  return redirect === '/dashboard/learn' ? true : router.parseUrl(redirect);
 };
 
 const publicGuard = () => {
@@ -46,17 +37,9 @@ const onboardingGuard = () => {
   const router = inject(Router);
   const user = authService.currentUser();
   const profile = authService.userProfile();
-  
-  if (!user) {
-    return router.parseUrl('/login');
-  }
-  
-  const isVerified = user.email === 'schoedelb@gmail.com' || user.emailVerified;
-  if (isVerified && profile?.registrationComplete) {
-    return router.parseUrl('/dashboard/learn');
-  }
-  
-  return true;
+  const redirect = getAuthRedirect(user, profile);
+
+  return redirect === '/onboarding' ? true : router.parseUrl(redirect);
 };
 
 export const routes: Routes = [
