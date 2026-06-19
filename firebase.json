@@ -1,5 +1,12 @@
 {
+  "firestore": [
+    {
+      "database": "ai-studio-a6dc8729-d15a-47c8-9a5a-07d38ecc6d2f",
+      "rules": "firestore.rules"
+    }
+  ],
   "hosting": {
+    "target": "lx-python-ii",
     "public": "dist/app/browser",
     "ignore": [
       "firebase.json",
@@ -9,7 +16,7 @@
     "rewrites": [
       {
         "source": "**",
-        "destination": "/index.html"
+        "destination": "/index.csr.html"
       }
     ],
     "headers": [
