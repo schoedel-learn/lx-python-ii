@@ -8,7 +8,6 @@ import {
   sendEmailVerification,
   setPersistence,
   signInWithPopup,
-  signInWithRedirect,
   signOut,
   type User as FirebaseUser,
 } from 'firebase/auth';
@@ -42,7 +41,7 @@ function createAuthServiceDependencies(): AuthServiceDependencies {
       provider.addScope('profile');
       provider.addScope('email');
       await setPersistence(auth, browserLocalPersistence);
-      return signInWithRedirect(auth, provider);
+      return signInWithPopup(auth, provider);
     },
     completeRedirectSignIn: () => getRedirectResult(auth),
     signOut: () => signOut(auth),
