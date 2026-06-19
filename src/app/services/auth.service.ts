@@ -50,13 +50,24 @@ export class AuthService {
       return;
     }
 
-    const profile = await this.fetchOrCreateUserProfile(user);
-    if (revision !== this.authStateRevision) {
-      return;
+    try {
+      const profile = await this.fetchOrCreateUserProfile(user);
+      if (revision !== this.authStateRevision) {
+        return;
+      }
+
+      this.userProfile.set(profile);
+    } catch (error) {
+      if (revision !== this.authStateRevision) {
+        return;
+      }
+
+      console.error('Failed to load user profile:', error);
     }
 
-    this.userProfile.set(profile);
-    this.isAuthReady.set(true);
+    if (revision === this.authStateRevision) {
+      this.isAuthReady.set(true);
+    }
   }
 
   private async fetchOrCreateUserProfile(user: FirebaseUser): Promise<UserProfile> {

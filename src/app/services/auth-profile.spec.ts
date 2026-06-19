@@ -204,4 +204,28 @@ describe('auth profile services', () => {
     expect(service.userProfile()).toEqual(secondProfile);
     expect(service.isAuthReady()).toBe(true);
   });
+
+  it('restores auth readiness when profile loading fails for the current revision', async () => {
+    const profileLoadError = new Error('firestore unavailable');
+    firestoreMocks.getDoc.mockRejectedValueOnce(profileLoadError);
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      const { AuthService } = await import('./auth.service');
+      const service = new AuthService();
+      const notifyAuthStateChange = authMockState.listener;
+      expect(notifyAuthStateChange).toBeDefined();
+      const user = buildMockUser({ uid: 'failed-user', email: 'failed@example.com' });
+
+      notifyAuthStateChange!(user);
+      await flushMicrotasks();
+
+      expect(service.currentUser()).toBe(user);
+      expect(service.userProfile()).toBeNull();
+      expect(service.isAuthReady()).toBe(true);
+      expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to load user profile:', profileLoadError);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
 });
