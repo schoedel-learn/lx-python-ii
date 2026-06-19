@@ -1,60 +1,38 @@
+import { Injector, runInInjectionContext } from '@angular/core';
+import type { User as FirebaseUser } from 'firebase/auth';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { buildDefaultUserProfile } from './auth-profile';
+import { AUTH_SERVICE_DEPENDENCIES, AuthService, type AuthServiceDependencies } from './auth.service';
 
 interface MockFirebaseUser {
   uid: string;
   displayName: string | null;
   email: string | null;
   emailVerified?: boolean;
-  delete?: ReturnType<typeof vi.fn>;
+  delete: ReturnType<typeof vi.fn>;
 }
 
-interface MockProfileDoc {
-  exists: () => boolean;
-  data: () => unknown;
-}
+const authMockState: {
+  listener?: (user: FirebaseUser | null) => void;
+} = {};
 
-const authMockState = vi.hoisted(() => ({
-  listener: undefined as ((user: MockFirebaseUser | null) => void) | undefined,
-}));
-
-const firestoreMocks = vi.hoisted(() => ({
-  getDoc: vi.fn<() => Promise<MockProfileDoc>>(),
-  setDoc: vi.fn(),
-  updateDoc: vi.fn(),
-  deleteDoc: vi.fn(),
-}));
-
-const authMocks = vi.hoisted(() => ({
-  signInWithPopup: vi.fn(),
-  signOut: vi.fn(),
-  sendEmailVerification: vi.fn(),
-}));
-
-vi.mock('../../firebase', () => ({
-  auth: {
-    onAuthStateChanged: vi.fn((listener: (user: MockFirebaseUser | null) => void) => {
+function createMockDependencies(): AuthServiceDependencies {
+  return {
+    onAuthStateChanged: vi.fn((listener) => {
       authMockState.listener = listener;
       return vi.fn();
     }),
-  },
-  db: {},
-}));
-
-vi.mock('firebase/auth', () => ({
-  GoogleAuthProvider: vi.fn(),
-  signInWithPopup: authMocks.signInWithPopup,
-  signOut: authMocks.signOut,
-  sendEmailVerification: authMocks.sendEmailVerification,
-}));
-
-vi.mock('firebase/firestore', () => ({
-  doc: vi.fn(() => ({ path: 'users/mock-user' })),
-  getDoc: firestoreMocks.getDoc,
-  setDoc: firestoreMocks.setDoc,
-  updateDoc: firestoreMocks.updateDoc,
-  deleteDoc: firestoreMocks.deleteDoc,
-}));
+    signInWithGoogle: vi.fn(),
+    signOut: vi.fn(async () => undefined),
+    fetchOrCreateUserProfile: vi.fn(),
+    updateUserProfile: vi.fn(async () => undefined),
+    sendVerificationEmail: vi.fn(async () => undefined),
+    deleteUserProfile: vi.fn(async () => undefined),
+    deleteCurrentUser: vi.fn(async () => undefined),
+    reauthenticateWithGoogle: vi.fn(),
+  };
+}
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
@@ -68,14 +46,7 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-function existingProfile(profile: unknown): MockProfileDoc {
-  return {
-    exists: () => true,
-    data: () => profile,
-  };
-}
-
-function buildMockUser(overrides: Partial<MockFirebaseUser> = {}): MockFirebaseUser {
+function buildMockUser(overrides: Partial<MockFirebaseUser> = {}): FirebaseUser {
   return {
     uid: 'mock-user',
     displayName: 'Learner Example',
@@ -83,7 +54,7 @@ function buildMockUser(overrides: Partial<MockFirebaseUser> = {}): MockFirebaseU
     emailVerified: true,
     delete: vi.fn(),
     ...overrides,
-  };
+  } as unknown as FirebaseUser;
 }
 
 async function flushMicrotasks() {
@@ -91,17 +62,26 @@ async function flushMicrotasks() {
   await Promise.resolve();
 }
 
+function createService(dependencies: AuthServiceDependencies): AuthService {
+  return runInInjectionContext(
+    Injector.create({
+      providers: [
+        {
+          provide: AUTH_SERVICE_DEPENDENCIES,
+          useValue: dependencies,
+        },
+      ],
+    }),
+    () => new AuthService(),
+  );
+}
+
 describe('auth profile services', () => {
+  let dependencies: AuthServiceDependencies;
+
   beforeEach(() => {
     authMockState.listener = undefined;
-    firestoreMocks.getDoc.mockReset();
-    firestoreMocks.setDoc.mockReset();
-    firestoreMocks.updateDoc.mockReset();
-    firestoreMocks.deleteDoc.mockReset();
-    authMocks.signInWithPopup.mockReset();
-    authMocks.signOut.mockReset();
-    authMocks.sendEmailVerification.mockReset();
-    vi.resetModules();
+    dependencies = createMockDependencies();
   });
 
   it('enables confirmed newsletter defaults for the owner email', () => {
@@ -113,7 +93,7 @@ describe('auth profile services', () => {
         uid: 'owner-1',
         displayName: 'Barry Schoedel',
         email: 'schoedelb@gmail.com',
-      });
+      } as FirebaseUser);
 
       expect(profile).toMatchObject({
         uid: 'owner-1',
@@ -132,18 +112,17 @@ describe('auth profile services', () => {
   });
 
   it('marks auth as pending and clears stale profiles until the matching profile load completes', async () => {
-    const deferred = createDeferred<MockProfileDoc>();
     const previousProfile = buildDefaultUserProfile({
       uid: 'old-user',
       displayName: 'Old Learner',
       email: 'old@example.com',
-    });
-    firestoreMocks.getDoc
-      .mockResolvedValueOnce(existingProfile(previousProfile))
+    } as FirebaseUser);
+    const deferred = createDeferred<typeof previousProfile>();
+    vi.mocked(dependencies.fetchOrCreateUserProfile)
+      .mockResolvedValueOnce(previousProfile)
       .mockReturnValueOnce(deferred.promise);
 
-    const { AuthService } = await import('./auth.service');
-    const service = new AuthService();
+    const service = createService(dependencies);
     const notifyAuthStateChange = authMockState.listener;
     expect(notifyAuthStateChange).toBeDefined();
 
@@ -159,7 +138,7 @@ describe('auth profile services', () => {
     expect(service.userProfile()).toBeNull();
     expect(service.isAuthReady()).toBe(false);
 
-    deferred.resolve(existingProfile(nextProfile));
+    deferred.resolve(nextProfile);
     await deferred.promise;
     await flushMicrotasks();
 
@@ -168,14 +147,13 @@ describe('auth profile services', () => {
   });
 
   it('ignores stale profile loads from superseded auth revisions', async () => {
-    const firstDeferred = createDeferred<MockProfileDoc>();
-    const secondDeferred = createDeferred<MockProfileDoc>();
-    firestoreMocks.getDoc
+    const firstDeferred = createDeferred<ReturnType<typeof buildDefaultUserProfile>>();
+    const secondDeferred = createDeferred<ReturnType<typeof buildDefaultUserProfile>>();
+    vi.mocked(dependencies.fetchOrCreateUserProfile)
       .mockReturnValueOnce(firstDeferred.promise)
       .mockReturnValueOnce(secondDeferred.promise);
 
-    const { AuthService } = await import('./auth.service');
-    const service = new AuthService();
+    const service = createService(dependencies);
     const notifyAuthStateChange = authMockState.listener;
     expect(notifyAuthStateChange).toBeDefined();
     const firstUser = buildMockUser({ uid: 'first-user', email: 'first@example.com' });
@@ -189,7 +167,7 @@ describe('auth profile services', () => {
     expect(service.userProfile()).toBeNull();
     expect(service.isAuthReady()).toBe(false);
 
-    firstDeferred.resolve(existingProfile(buildDefaultUserProfile(firstUser)));
+    firstDeferred.resolve(buildDefaultUserProfile(firstUser));
     await firstDeferred.promise;
     await flushMicrotasks();
 
@@ -197,7 +175,7 @@ describe('auth profile services', () => {
     expect(service.userProfile()).toBeNull();
     expect(service.isAuthReady()).toBe(false);
 
-    secondDeferred.resolve(existingProfile(secondProfile));
+    secondDeferred.resolve(secondProfile);
     await secondDeferred.promise;
     await flushMicrotasks();
 
@@ -207,12 +185,11 @@ describe('auth profile services', () => {
 
   it('restores auth readiness when profile loading fails for the current revision', async () => {
     const profileLoadError = new Error('firestore unavailable');
-    firestoreMocks.getDoc.mockRejectedValueOnce(profileLoadError);
+    vi.mocked(dependencies.fetchOrCreateUserProfile).mockRejectedValueOnce(profileLoadError);
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     try {
-      const { AuthService } = await import('./auth.service');
-      const service = new AuthService();
+      const service = createService(dependencies);
       const notifyAuthStateChange = authMockState.listener;
       expect(notifyAuthStateChange).toBeDefined();
       const user = buildMockUser({ uid: 'failed-user', email: 'failed@example.com' });

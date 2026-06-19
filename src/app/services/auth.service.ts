@@ -1,4 +1,4 @@
-import { Injectable, signal } from '@angular/core';
+import { Injectable, InjectionToken, inject, signal } from '@angular/core';
 import { auth, db } from '../../firebase';
 import { GoogleAuthProvider, signInWithPopup, signOut, type User as FirebaseUser, sendEmailVerification } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
@@ -8,6 +8,62 @@ import type { UserProfile } from './auth-profile';
 
 export type { UserProfile } from './auth-profile';
 
+type AuthStateListener = (user: FirebaseUser | null) => void;
+
+export interface AuthServiceDependencies {
+  onAuthStateChanged(listener: AuthStateListener): () => void;
+  signInWithGoogle(): Promise<unknown>;
+  signOut(): Promise<void>;
+  fetchOrCreateUserProfile(user: FirebaseUser): Promise<UserProfile>;
+  updateUserProfile(userId: string, updates: Partial<UserProfile>): Promise<void>;
+  sendVerificationEmail(user: FirebaseUser): Promise<void>;
+  deleteUserProfile(userId: string): Promise<void>;
+  deleteCurrentUser(user: FirebaseUser): Promise<void>;
+  reauthenticateWithGoogle(): Promise<unknown>;
+}
+
+function createAuthServiceDependencies(): AuthServiceDependencies {
+  return {
+    onAuthStateChanged: (listener) => auth.onAuthStateChanged(listener),
+    signInWithGoogle: () => {
+      const provider = new GoogleAuthProvider();
+      return signInWithPopup(auth, provider);
+    },
+    signOut: () => signOut(auth),
+    fetchOrCreateUserProfile: async (user) => {
+      const docRef = doc(db, 'users', user.uid);
+      const docSnap = await getDoc(docRef);
+
+      if (docSnap.exists()) {
+        return docSnap.data() as UserProfile;
+      }
+
+      const newProfile = buildDefaultUserProfile(user);
+      await setDoc(docRef, newProfile);
+      return newProfile;
+    },
+    updateUserProfile: async (userId, updates) => {
+      const docRef = doc(db, 'users', userId);
+      await updateDoc(docRef, updates);
+    },
+    sendVerificationEmail: (user) => sendEmailVerification(user),
+    deleteUserProfile: async (userId) => {
+      const docRef = doc(db, 'users', userId);
+      await deleteDoc(docRef);
+    },
+    deleteCurrentUser: (user) => user.delete(),
+    reauthenticateWithGoogle: () => {
+      const provider = new GoogleAuthProvider();
+      return signInWithPopup(auth, provider);
+    },
+  };
+}
+
+export const AUTH_SERVICE_DEPENDENCIES = new InjectionToken<AuthServiceDependencies>('AUTH_SERVICE_DEPENDENCIES', {
+  providedIn: 'root',
+  factory: createAuthServiceDependencies,
+});
+
 @Injectable({
   providedIn: 'root'
 })
@@ -16,17 +72,17 @@ export class AuthService {
   userProfile = signal<UserProfile | null>(null);
   isAuthReady = signal<boolean>(false);
   private authStateRevision = 0;
+  private readonly dependencies = inject(AUTH_SERVICE_DEPENDENCIES);
 
   constructor() {
-    auth.onAuthStateChanged((user) => {
+    this.dependencies.onAuthStateChanged((user) => {
       void this.handleAuthStateChange(user);
     });
   }
 
   async loginWithGoogle() {
     try {
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
+      await this.dependencies.signInWithGoogle();
     } catch (error) {
       console.error('Login error:', error);
       throw error;
@@ -34,7 +90,7 @@ export class AuthService {
   }
 
   async logout() {
-    await signOut(auth);
+    await this.dependencies.signOut();
   }
 
   private async handleAuthStateChange(user: FirebaseUser | null) {
@@ -51,7 +107,7 @@ export class AuthService {
     }
 
     try {
-      const profile = await this.fetchOrCreateUserProfile(user);
+      const profile = await this.dependencies.fetchOrCreateUserProfile(user);
       if (revision !== this.authStateRevision) {
         return;
       }
@@ -70,25 +126,11 @@ export class AuthService {
     }
   }
 
-  private async fetchOrCreateUserProfile(user: FirebaseUser): Promise<UserProfile> {
-    const docRef = doc(db, 'users', user.uid);
-    const docSnap = await getDoc(docRef);
-
-    if (docSnap.exists()) {
-      return docSnap.data() as UserProfile;
-    }
-
-    const newProfile = buildDefaultUserProfile(user);
-    await setDoc(docRef, newProfile);
-    return newProfile;
-  }
-
   async updateProfile(updates: Partial<UserProfile>) {
     const user = this.currentUser();
     if (!user) return;
 
-    const docRef = doc(db, 'users', user.uid);
-    await updateDoc(docRef, updates);
+    await this.dependencies.updateUserProfile(user.uid, updates);
 
     const currentProfile = this.userProfile();
     if (currentProfile) {
@@ -99,7 +141,7 @@ export class AuthService {
   async sendVerificationEmail() {
     const user = this.currentUser();
     if (user && !user.emailVerified) {
-      await sendEmailVerification(user);
+      await this.dependencies.sendVerificationEmail(user);
     }
   }
 
@@ -108,23 +150,14 @@ export class AuthService {
     if (!user) return;
 
     try {
-      // Delete user profile document from Firestore
-      const docRef = doc(db, 'users', user.uid);
-      await deleteDoc(docRef);
-
-      // Delete user from Firebase Auth
-      await user.delete();
+      await this.dependencies.deleteUserProfile(user.uid);
+      await this.dependencies.deleteCurrentUser(user);
     } catch (error: unknown) {
       console.error('Error deleting account:', error);
-      // If re-authentication is required
       if (error instanceof FirebaseError && error.code === 'auth/requires-recent-login') {
-        const provider = new GoogleAuthProvider();
-        await signInWithPopup(auth, provider);
-
-        // Try again
-        const docRef = doc(db, 'users', user.uid);
-        await deleteDoc(docRef);
-        await user.delete();
+        await this.dependencies.reauthenticateWithGoogle();
+        await this.dependencies.deleteUserProfile(user.uid);
+        await this.dependencies.deleteCurrentUser(user);
       } else {
         throw error;
       }
