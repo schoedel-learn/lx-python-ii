@@ -3,6 +3,8 @@ import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
 import { AuthService } from '../../services/auth.service';
 import { MatIconModule } from '@angular/material/icon';
 import { FormsModule } from '@angular/forms';
+import { isAdminEmail } from '../../auth/auth-policy';
+import { getCommunityStatus, isDeleteConfirmationValid } from './dashboard-view-model';
 
 @Component({
   selector: 'app-dashboard',
@@ -192,7 +194,7 @@ import { FormsModule } from '@angular/forms';
                   <p class="mb-4 text-xs text-[#859490]">Deleting your account is permanent. Type your email to confirm.</p>
                   <input type="email" [(ngModel)]="deleteEmailConfirm" placeholder="{{ authService.userProfile()?.email }}"
                     class="sanctuary-input mb-3 w-full px-4 py-3 text-sm focus:outline-none">
-                  <button (click)="deleteAccount()" [disabled]="deleteEmailConfirm !== authService.userProfile()?.email"
+                  <button (click)="deleteAccount()" [disabled]="!canDeleteAccount()"
                     class="flex w-full items-center justify-center gap-2 rounded-[1.25rem] bg-[#ffb4ab]/12 px-4 py-3 font-medium text-[#ffb4ab] transition-colors hover:bg-[#ffb4ab]/20 disabled:cursor-not-allowed disabled:opacity-50">
                     <mat-icon class="h-5 w-5">delete_forever</mat-icon> Delete Account
                   </button>
@@ -211,7 +213,7 @@ export class DashboardComponent {
   deleteEmailConfirm = '';
 
   isAdmin() {
-    return this.authService.userProfile()?.email === 'schoedelb@gmail.com';
+    return isAdminEmail(this.authService.userProfile()?.email);
   }
 
   async logout() {
@@ -219,7 +221,7 @@ export class DashboardComponent {
   }
 
   async deleteAccount() {
-    if (this.deleteEmailConfirm === this.authService.userProfile()?.email) {
+    if (this.canDeleteAccount()) {
       await this.authService.deleteAccount();
     }
   }
@@ -229,6 +231,10 @@ export class DashboardComponent {
   }
 
   communityStatus(): string {
-    return this.authService.userProfile()?.newsletterOptIn ? 'Connected' : 'Private';
+    return getCommunityStatus(this.authService.userProfile());
+  }
+
+  canDeleteAccount(): boolean {
+    return isDeleteConfirmationValid(this.authService.userProfile()?.email, this.deleteEmailConfirm);
   }
 }

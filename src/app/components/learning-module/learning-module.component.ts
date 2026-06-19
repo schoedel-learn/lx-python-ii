@@ -7,6 +7,7 @@ import { CodeAttemptService } from '../../services/code-attempt.service';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MonacoEditorModule } from 'ngx-monaco-editor-v2';
+import { getExecutionSummary } from './learning-workspace-state';
 
 @Component({
   selector: 'app-learning-module',
@@ -36,7 +37,7 @@ import { MonacoEditorModule } from 'ngx-monaco-editor-v2';
               </div>
               <div class="rounded-[1.4rem] bg-[#111c2d] px-4 py-4">
                 <p class="text-[0.64rem] uppercase tracking-[0.18em] text-[#859490]">Execution</p>
-                <p class="mt-2 text-sm font-semibold">{{ outputResult() ? (outputResult()?.error ? 'Needs fixes' : 'Latest run captured') : 'No run yet' }}</p>
+                <p class="mt-2 text-sm font-semibold">{{ executionSummary() }}</p>
               </div>
             </div>
           </div>
@@ -144,7 +145,7 @@ import { MonacoEditorModule } from 'ngx-monaco-editor-v2';
                 </div>
                 <div class="rounded-[1.25rem] bg-[#111c2d] px-4 py-4 text-sm">
                   <span class="text-[0.62rem] uppercase tracking-[0.18em] text-[#859490]">Latest run</span>
-                  <p class="mt-2 font-semibold text-[#d8e3fb]">{{ outputResult() ? (outputResult()?.error ? 'Needs debugging' : 'Captured successfully') : 'No execution yet' }}</p>
+                  <p class="mt-2 font-semibold text-[#d8e3fb]">{{ executionSummary() }}</p>
                 </div>
               </div>
 
@@ -524,5 +525,9 @@ export class LearningModuleComponent implements OnInit {
   usePrompt(prompt: string) {
     this.topic = prompt;
     void this.sendMessage();
+  }
+
+  executionSummary(): string {
+    return getExecutionSummary(this.outputResult());
   }
 }
