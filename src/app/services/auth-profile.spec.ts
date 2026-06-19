@@ -1,4 +1,4 @@
-import { Injector, runInInjectionContext } from '@angular/core';
+import { Injector, PLATFORM_ID, runInInjectionContext } from '@angular/core';
 import type { User as FirebaseUser } from 'firebase/auth';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -24,6 +24,7 @@ function createMockDependencies(): AuthServiceDependencies {
       return vi.fn();
     }),
     signInWithGoogle: vi.fn(),
+    completeRedirectSignIn: vi.fn(async () => null),
     signOut: vi.fn(async () => undefined),
     fetchOrCreateUserProfile: vi.fn(),
     updateUserProfile: vi.fn(async () => undefined),
@@ -69,6 +70,10 @@ function createService(dependencies: AuthServiceDependencies): AuthService {
         {
           provide: AUTH_SERVICE_DEPENDENCIES,
           useValue: dependencies,
+        },
+        {
+          provide: PLATFORM_ID,
+          useValue: 'browser',
         },
       ],
     }),

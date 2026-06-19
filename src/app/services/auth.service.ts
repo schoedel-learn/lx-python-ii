@@ -1,6 +1,17 @@
-import { Injectable, InjectionToken, inject, signal } from '@angular/core';
+import { isPlatformBrowser } from '@angular/common';
+import { Injectable, InjectionToken, PLATFORM_ID, inject, signal } from '@angular/core';
 import { auth, db } from '../../firebase';
-import { GoogleAuthProvider, signInWithPopup, signOut, type User as FirebaseUser, sendEmailVerification } from 'firebase/auth';
+import {
+  browserLocalPersistence,
+  getRedirectResult,
+  GoogleAuthProvider,
+  sendEmailVerification,
+  setPersistence,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut,
+  type User as FirebaseUser,
+} from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { FirebaseError } from 'firebase/app';
 import { buildDefaultUserProfile } from './auth-profile';
@@ -13,6 +24,7 @@ type AuthStateListener = (user: FirebaseUser | null) => void;
 export interface AuthServiceDependencies {
   onAuthStateChanged(listener: AuthStateListener): () => void;
   signInWithGoogle(): Promise<unknown>;
+  completeRedirectSignIn(): Promise<unknown>;
   signOut(): Promise<void>;
   fetchOrCreateUserProfile(user: FirebaseUser): Promise<UserProfile>;
   updateUserProfile(userId: string, updates: Partial<UserProfile>): Promise<void>;
@@ -25,10 +37,14 @@ export interface AuthServiceDependencies {
 function createAuthServiceDependencies(): AuthServiceDependencies {
   return {
     onAuthStateChanged: (listener) => auth.onAuthStateChanged(listener),
-    signInWithGoogle: () => {
+    signInWithGoogle: async () => {
       const provider = new GoogleAuthProvider();
-      return signInWithPopup(auth, provider);
+      provider.addScope('profile');
+      provider.addScope('email');
+      await setPersistence(auth, browserLocalPersistence);
+      return signInWithRedirect(auth, provider);
     },
+    completeRedirectSignIn: () => getRedirectResult(auth),
     signOut: () => signOut(auth),
     fetchOrCreateUserProfile: async (user) => {
       const docRef = doc(db, 'users', user.uid);
@@ -71,20 +87,30 @@ export class AuthService {
   currentUser = signal<FirebaseUser | null>(null);
   userProfile = signal<UserProfile | null>(null);
   isAuthReady = signal<boolean>(false);
+  authError = signal<string | null>(null);
   private authStateRevision = 0;
   private readonly dependencies = inject(AUTH_SERVICE_DEPENDENCIES);
+  private readonly isBrowser = isPlatformBrowser(inject(PLATFORM_ID));
 
   constructor() {
     this.dependencies.onAuthStateChanged((user) => {
       void this.handleAuthStateChange(user);
     });
+    if (this.isBrowser) {
+      void this.completePendingRedirectSignIn();
+    }
   }
 
   async loginWithGoogle() {
     try {
+      this.authError.set(null);
+      if (!this.isBrowser) {
+        return;
+      }
       await this.dependencies.signInWithGoogle();
     } catch (error) {
       console.error('Login error:', error);
+      this.authError.set(getAuthErrorMessage(error));
       throw error;
     }
   }
@@ -126,6 +152,15 @@ export class AuthService {
     }
   }
 
+  private async completePendingRedirectSignIn() {
+    try {
+      await this.dependencies.completeRedirectSignIn();
+    } catch (error) {
+      console.error('Redirect login error:', error);
+      this.authError.set(getAuthErrorMessage(error));
+    }
+  }
+
   async updateProfile(updates: Partial<UserProfile>) {
     const user = this.currentUser();
     if (!user) return;
@@ -163,4 +198,24 @@ export class AuthService {
       }
     }
   }
+}
+
+function getAuthErrorMessage(error: unknown): string {
+  if (error instanceof FirebaseError) {
+    if (error.code === 'auth/unauthorized-domain') {
+      return 'This domain is not authorized for Google sign-in in Firebase.';
+    }
+
+    if (error.code === 'auth/popup-blocked' || error.code === 'auth/popup-closed-by-user') {
+      return 'The Google sign-in window was blocked or closed before sign-in finished.';
+    }
+
+    if (error.code === 'auth/network-request-failed') {
+      return 'Google sign-in could not reach Firebase. Check your connection and try again.';
+    }
+
+    return `Google sign-in failed: ${error.code}`;
+  }
+
+  return 'Google sign-in failed. Please try again.';
 }

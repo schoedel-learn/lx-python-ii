@@ -97,6 +97,11 @@ import { AuthService } from '../../services/auth.service';
                 <span class="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/85 text-base font-bold text-[#003731]">G</span>
                 Sign in with Google
               </button>
+              @if (authService.authError()) {
+                <p class="mt-4 rounded-[1rem] bg-[#2b1620] px-4 py-3 text-sm leading-6 text-[#ffc2d2]">
+                  {{ authService.authError() }}
+                </p>
+              }
               <p class="mt-4 text-center text-xs leading-6 text-[#859490]">
                 New accounts are guided through a short onboarding flow before entering the workspace.
               </p>

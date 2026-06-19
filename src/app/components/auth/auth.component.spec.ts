@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import { signal } from '@angular/core';
 import { vi } from 'vitest';
 import { AuthComponent } from './auth.component';
 import { AuthService } from '../../services/auth.service';
@@ -15,6 +16,7 @@ describe('AuthComponent', () => {
         {
           provide: AuthService,
           useValue: {
+            authError: signal<string | null>(null),
             loginWithGoogle,
           },
         },
